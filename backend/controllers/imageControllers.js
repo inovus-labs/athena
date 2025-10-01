@@ -1,5 +1,5 @@
 import multer from "multer"
-import imageManager from "../utils/imageManagers.js"
+import { imageToText, imageToTextSpeech } from "../utils/imageManagers.js"
 
 // Setup multer storage
 const storage = multer.memoryStorage();
@@ -27,13 +27,17 @@ export const imageInfo = async (req, res) => {
         }));
 
         const base64Image = req.files[0].buffer.toString("base64");
-        const imgRes = await imageManager(base64Image);
 
-        res.status(200).json({
-            status: 200,
-            message: "Images uploaded successfully",
-            // images: uploadedImages,
-            imgRes
-        });
+        if (req.query.OUTPUT === "text") {
+            const ImageText = await imageToText(base64Image)
+            return res.status(200).send(
+                ImageText
+            )
+        } else {
+            const ImageTextSpeech = await imageToTextSpeech(base64Image)
+            return res.status(200).send(
+                ImageTextSpeech
+            )
+        }
     });
 };
