@@ -1,6 +1,5 @@
 #include "esp_camera.h"
 #include <WiFi.h>
-#include <WebServer.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 
@@ -32,57 +31,7 @@ const char* password = "Ormailla";
 #define PRESS_ACTIVE_LOW true
 
 // ====== POST TARGET ======
-const char* POST_URL = "https://gigwork.co.in";
-
-// ====== WebServer ======
-WebServer server(80);
-
-// ====== CAPTURE HANDLER ======
-void handleCapture() {
-  camera_fb_t * fb = esp_camera_fb_get();
-  if (!fb) {
-    server.send(500, "text/plain", "Camera capture failed");
-    return;
-  }
-
-  server.sendHeader("Content-Type", "image/jpeg");
-  server.sendHeader("Content-Disposition", "inline; filename=capture.jpg");
-  server.send_P(200, "image/jpeg", (const char *)fb->buf, fb->len);
-
-  esp_camera_fb_return(fb);
-}
-
-// ====== POST REQUEST ======
-void sendPOSTRequest(const String& url) {
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("WiFi not connected!");
-    return;
-  }
-
-  WiFiClientSecure client;
-  client.setInsecure(); // disable cert check for now
-
-  HTTPClient http;
-  if (!http.begin(client, url)) {
-    Serial.println("HTTP begin() failed");
-    return;
-  }
-
-  // Example payload
-  String payload = "{\"device\":\"xiao-c3\",\"event\":\"button_press\"}";
-  http.addHeader("Content-Type", "application/json");
-
-  int code = http.POST(payload);
-  if (code > 0) {
-    Serial.printf("HTTP %d\n", code);
-    String resp = http.getString();
-    Serial.println("Response:");
-    Serial.println(resp);
-  } else {
-    Serial.printf("HTTP error: %s\n", http.errorToString(code).c_str());
-  }
-  http.end();
-}
+const char* POST_URL = "https://athena-ghc1.onrender.com/api/v1/getImageInfo";
 
 // ====== WIFI CONNECT ======
 void connectWiFi() {
@@ -95,6 +44,67 @@ void connectWiFi() {
   Serial.println("\nWiFi connected!");
   Serial.print("ESP32-C3 IP Address: ");
   Serial.println(WiFi.localIP());
+}
+
+// ====== SEND IMAGE AS MULTIPART ======
+void sendImageMultipart(const String& url) {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi not connected!");
+    return;
+  }
+
+  // Capture image
+  camera_fb_t *fb = esp_camera_fb_get();
+  if (!fb) {
+    Serial.println("Camera capture failed!");
+    return;
+  }
+
+  WiFiClientSecure client;
+  client.setInsecure(); // Skip certificate check
+
+  HTTPClient http;
+  if (!http.begin(client, url)) {
+    Serial.println("HTTP begin() failed");
+    esp_camera_fb_return(fb);
+    return;
+  }
+
+  String boundary = "----ESP32Boundary";
+  String start_request = "--" + boundary + "\r\n";
+  start_request += "Content-Disposition: form-data; name=\"images\"; filename=\"photo.jpg\"\r\n";
+  start_request += "Content-Type: image/jpeg\r\n\r\n";
+
+  String end_request = "\r\n--" + boundary + "--\r\n";
+
+  int contentLength = start_request.length() + fb->len + end_request.length();
+
+  http.addHeader("Content-Type", "multipart/form-data; boundary=" + boundary);
+  http.addHeader("Content-Length", String(contentLength));
+
+  // Send headers and starting part
+  int code = http.sendRequest("POST", (uint8_t*)start_request.c_str(), start_request.length());
+  if (code > 0) {
+    // Send image data
+    client.write(fb->buf, fb->len);
+
+    // Send closing boundary
+    client.print(end_request);
+
+    // Read response
+    while (client.connected()) {
+      String line = client.readStringUntil('\n');
+      if (line == "\r") break;
+    }
+    String response = client.readString();
+    Serial.println("Server response:");
+    Serial.println(response);
+  } else {
+    Serial.printf("HTTP error: %s\n", http.errorToString(code).c_str());
+  }
+
+  http.end();
+  esp_camera_fb_return(fb);
 }
 
 // ====== SETUP ======
@@ -139,31 +149,16 @@ void setup() {
 
   // ---- WIFI ----
   connectWiFi();
-
-  // ---- ROUTES ----
-  server.on("/", []() {
-    server.send(200, "text/html", 
-      "<html><body><h1>ESP32-C3 Camera</h1>"
-      "<p><a href=\"/capture\">📸 Take Photo</a></p>"
-      "</body></html>");
-  });
-
-  server.on("/capture", handleCapture);
-
-  server.begin();
-  Serial.println("Web server started!");
 }
 
 // ====== LOOP ======
 void loop() {
-  server.handleClient();
-
   static bool wasPressed = false;
   bool pressed = PRESS_ACTIVE_LOW ? (digitalRead(BUTTON_PIN) == LOW) : (digitalRead(BUTTON_PIN) == HIGH);
 
   if (pressed && !wasPressed) {
-    Serial.println("Button pressed → sending POST request...");
-    sendPOSTRequest(POST_URL);
+    Serial.println("Button pressed → sending image via multipart/form-data...");
+    sendImageMultipart(POST_URL);
   }
   wasPressed = pressed;
 }
