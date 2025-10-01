@@ -1,37 +1,51 @@
-import path from 'path'
-import fs from 'fs/promises'
-import { fileURLToPath } from 'url'
+import path from "path";
+import multer from "multer";
 
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = path.dirname(__filename)
+// Setup multer storage
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => { // `cb` stands for callback
+        cb(null, 'storage/') // where to store the files
+    },
+    filename: (req, file, cb) => {
+        cb(null, Date.now() + path.extname(file.originalname)) // gives the file a unique name
+    }
+})
+
+export const upload = multer({ storage: storage });
 
 export const imageInfo = async (req, res) => {
-    try {
-        const filename = req.params.filename
-        const imagePath = path.join(__dirname, '..', 'images', filename) // Adjust path if needed
 
-        // Read file with async/await
-        const data = await fs.readFile(imagePath)
-
-        // Detect MIME type
-        const ext = path.extname(filename).toLowerCase()
-        let contentType = 'application/octet-stream'
-        if (ext === '.jpg' || ext === '.jpeg') {
-            contentType = 'image/jpeg'
-        } else if (ext === '.png') {
-            contentType = 'image/png'
-        } else if (ext === '.gif') {
-            contentType = 'image/gif'
+    upload.array('images')(req, res, async (error) => {
+        if (error) {
+            return res.status(400).json({
+                status: 400,
+                message: "Error uploading images",
+                error: error.message
+            })
         }
-
-        // Send the image
-        res.setHeader('Content-Type', contentType)
-        return res.send(data)
-    } catch (err) {
-        console.error('Error reading image:', err)
-        return res.status(404).json({
-            status: 404,
-            message: 'Image not found'
-        })
-    }
-}
+        try {
+            const newImage = {
+                "images": req.files
+            }
+            if (newImage) {
+                return res.status(200).json({
+                    status: 200,
+                    message: "Image uploaded successfully",
+                    images: req.files,
+                })
+            } else {
+                return res.status(400).json({
+                    status: 400,
+                    message: "No mail found!"
+                })
+            }
+        } catch (error) {
+            console.error("Error: something went wrong,", error.message)
+            return res.status(500).json({
+                status: 500,
+                message: "Internal server error",
+                error: error.message
+            })
+        }
+    })
+};
