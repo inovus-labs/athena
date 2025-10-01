@@ -10,7 +10,7 @@ router.get("/", (req, res) => {
     })
 })
 
-// GET image by filename
-router.get("/getImageInfo/:filename", imageInfo)
+// POST req
+router.post("/getImageInfo/", imageInfo)
 
 export default router

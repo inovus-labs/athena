@@ -1,37 +1,39 @@
-import path from 'path'
-import fs from 'fs/promises'
-import { fileURLToPath } from 'url'
+import multer from "multer"
+import imageManager from "../utils/imageManagers.js"
 
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = path.dirname(__filename)
+// Setup multer storage
+const storage = multer.memoryStorage();
+
+export const upload = multer({ storage });
 
 export const imageInfo = async (req, res) => {
-    try {
-        const filename = req.params.filename
-        const imagePath = path.join(__dirname, '..', 'images', filename) // Adjust path if needed
-
-        // Read file with async/await
-        const data = await fs.readFile(imagePath)
-
-        // Detect MIME type
-        const ext = path.extname(filename).toLowerCase()
-        let contentType = 'application/octet-stream'
-        if (ext === '.jpg' || ext === '.jpeg') {
-            contentType = 'image/jpeg'
-        } else if (ext === '.png') {
-            contentType = 'image/png'
-        } else if (ext === '.gif') {
-            contentType = 'image/gif'
+    upload.array("images")(req, res, async (error) => {
+        if (error) {
+            return res.status(400).json({
+                status: 400,
+                message: error.message
+            });
         }
 
-        // Send the image
-        res.setHeader('Content-Type', contentType)
-        return res.send(data)
-    } catch (err) {
-        console.error('Error reading image:', err)
-        return res.status(404).json({
-            status: 404,
-            message: 'Image not found'
-        })
-    }
-}
+        if (!req.files || req.files.length === 0) {
+            return res.status(400).json({ status: 400, message: "No image uploaded!" });
+        }
+
+        // Directly use buffer without disk read
+        const uploadedImages = req.files.map((file) => ({
+            originalName: file.originalname,
+            size: file.size,
+            mimetype: file.mimetype,
+        }));
+
+        const base64Image = req.files[0].buffer.toString("base64");
+        const imgRes = await imageManager(base64Image);
+
+        res.status(200).json({
+            status: 200,
+            message: "Images uploaded successfully",
+            // images: uploadedImages,
+            imgRes
+        });
+    });
+};

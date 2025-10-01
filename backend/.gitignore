@@ -1,2 +1,8 @@
 node_modules
 images
+.env
+/storage
+
+output.mp3
+
+.DS_Store
