@@ -30,7 +30,7 @@ const char* password = "Ormailla";
 #define BUTTON_PIN 5   // connect button between GPIO5 and GND
 #define PRESS_ACTIVE_LOW true
 
-// ====== POST TARGET ======
+// ====== HTTPS TARGET (single URL) ======
 const char* POST_URL = "https://athena-ghc1.onrender.com/api/v1/getImageInfo";
 
 // ====== WIFI CONNECT ======
@@ -42,68 +42,94 @@ void connectWiFi() {
     Serial.print(".");
   }
   Serial.println("\nWiFi connected!");
-  Serial.print("ESP32-C3 IP Address: ");
+  Serial.print("ESP32 IP Address: ");
   Serial.println(WiFi.localIP());
 }
 
-// ====== SEND IMAGE AS MULTIPART ======
-void sendImageMultipart(const String& url) {
+// ====== SEND IMAGE AS MULTIPART (HTTPClient + WiFiClientSecure) ======
+void sendImageMultipart() {
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("WiFi not connected!");
     return;
   }
 
   // Capture image
-  camera_fb_t *fb = esp_camera_fb_get();
+  camera_fb_t* fb = esp_camera_fb_get();
   if (!fb) {
     Serial.println("Camera capture failed!");
     return;
   }
 
-  WiFiClientSecure client;
-  client.setInsecure(); // Skip certificate check
+  // Multipart framing
+  String boundary = "----ESP32Boundary7e8c9b";
+  // If your server expects "image" instead of "images", change below.
+  String prolog =
+      "--" + boundary + "\r\n"
+      "Content-Disposition: form-data; name=\"images\"; filename=\"photo.jpg\"\r\n"
+      "Content-Type: image/jpeg\r\n\r\n";
 
-  HTTPClient http;
-  if (!http.begin(client, url)) {
-    Serial.println("HTTP begin() failed");
+  String epilog = "\r\n--" + boundary + "--\r\n";
+
+  // Allocate one contiguous buffer for the whole body
+  size_t totalLen = prolog.length() + fb->len + epilog.length();
+  uint8_t* body = (uint8_t*)malloc(totalLen);
+  if (!body) {
+    Serial.println("malloc failed for multipart body");
     esp_camera_fb_return(fb);
     return;
   }
 
-  String boundary = "----ESP32Boundary";
-  String start_request = "--" + boundary + "\r\n";
-  start_request += "Content-Disposition: form-data; name=\"images\"; filename=\"photo.jpg\"\r\n";
-  start_request += "Content-Type: image/jpeg\r\n\r\n";
+  // Fill the buffer: prolog + JPEG + epilog
+  size_t off = 0;
+  memcpy(body + off, prolog.c_str(), prolog.length());
+  off += prolog.length();
 
-  String end_request = "\r\n--" + boundary + "--\r\n";
+  memcpy(body + off, fb->buf, fb->len);
+  off += fb->len;
 
-  int contentLength = start_request.length() + fb->len + end_request.length();
+  memcpy(body + off, epilog.c_str(), epilog.length());
+  off += epilog.length();
+
+  if (off != totalLen) {
+    Serial.println("length mismatch assembling multipart body");
+    free(body);
+    esp_camera_fb_return(fb);
+    return;
+  }
+
+  // ---- HTTPS POST using HTTPClient over WiFiClientSecure ----
+  WiFiClientSecure client;       // HTTPS
+  client.setInsecure();          // NOTE: for production, pin the CA/cert instead
+
+  HTTPClient http;
+  Serial.println("Starting HTTPS POST...");
+  if (!http.begin(client, POST_URL)) {
+    Serial.println("http.begin() failed");
+    free(body);
+    esp_camera_fb_return(fb);
+    return;
+  }
 
   http.addHeader("Content-Type", "multipart/form-data; boundary=" + boundary);
-  http.addHeader("Content-Length", String(contentLength));
+  http.setUserAgent("esp32-cam/1.0");
+  http.setTimeout(20000); // ms read timeout
 
-  // Send headers and starting part
-  int code = http.sendRequest("POST", (uint8_t*)start_request.c_str(), start_request.length());
+  int code = http.sendRequest("POST", body, totalLen);
+
+  Serial.print("HTTP status: ");
+  Serial.println(code);
+
   if (code > 0) {
-    // Send image data
-    client.write(fb->buf, fb->len);
-
-    // Send closing boundary
-    client.print(end_request);
-
-    // Read response
-    while (client.connected()) {
-      String line = client.readStringUntil('\n');
-      if (line == "\r") break;
-    }
-    String response = client.readString();
-    Serial.println("Server response:");
-    Serial.println(response);
+    String resp = http.getString();
+    Serial.println("Response body:");
+    Serial.println(resp);
   } else {
-    Serial.printf("HTTP error: %s\n", http.errorToString(code).c_str());
+    Serial.print("HTTP error: ");
+    Serial.println(http.errorToString(code));
   }
 
   http.end();
+  free(body);
   esp_camera_fb_return(fb);
 }
 
@@ -138,9 +164,10 @@ void setup() {
   config.xclk_freq_hz = 20000000;
   config.pixel_format = PIXFORMAT_JPEG;
 
-  config.frame_size = FRAMESIZE_QVGA;  
-  config.jpeg_quality = 12;
-  config.fb_count = 1;
+  // Image settings (adjust as needed)
+  config.frame_size   = FRAMESIZE_QVGA;  // 320x240
+  config.jpeg_quality = 12;              // lower = better quality, larger file
+  config.fb_count     = 1;
 
   if (esp_camera_init(&config) != ESP_OK) {
     Serial.println("Camera init failed!");
@@ -154,11 +181,12 @@ void setup() {
 // ====== LOOP ======
 void loop() {
   static bool wasPressed = false;
-  bool pressed = PRESS_ACTIVE_LOW ? (digitalRead(BUTTON_PIN) == LOW) : (digitalRead(BUTTON_PIN) == HIGH);
+  bool pressed = PRESS_ACTIVE_LOW ? (digitalRead(BUTTON_PIN) == LOW)
+                                  : (digitalRead(BUTTON_PIN) == HIGH);
 
   if (pressed && !wasPressed) {
     Serial.println("Button pressed → sending image via multipart/form-data...");
-    sendImageMultipart(POST_URL);
+    sendImageMultipart();
   }
   wasPressed = pressed;
 }
