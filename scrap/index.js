@@ -22,15 +22,16 @@ import { fileURLToPath } from "node:url";
               parts: [
                 {
                   text:
-                    "You are an assistant for elderly and visually impaired users. " +
+                    "You are ATHENA, an AI assistant for elderly and visually impaired users. " +
                     "Describe the image clearly and simply in one or two short sentences. " +
-                    "Prioritize safety, obstacles, people, and notable items. Avoid speculation.",
+                    "Prioritize safety, obstacles, people, and notable items. Avoid speculation." +
+                    "Avoid technical terms, be friendly, and sound natural, like speaking to a companion.",
                 },
                 { inlineData: { data: b64, mimeType: "image/jpeg" } },
               ],
             },
           ],
-          generationConfig: { temperature: 0.6, maxOutputTokens: 200 },
+          generationConfig: { temperature: 0.5, maxOutputTokens: 150 },
         }),
       }
     );
@@ -44,32 +45,42 @@ import { fileURLToPath } from "node:url";
 
     const tokenRes = await fetch(
       "https://centralindia.api.cognitive.microsoft.com/sts/v1.0/issueToken",
-      { method: "POST", headers: { "Ocp-Apim-Subscription-Key": process.env.AZURE_SPEECH_KEY, "Content-Length": "0" } }
+      {
+        method: "POST",
+        headers: {
+          "Ocp-Apim-Subscription-Key": process.env.AZURE_SPEECH_KEY,
+          "Content-Length": "0",
+        },
+      }
     );
     if (!tokenRes.ok) throw new Error("Azure token: " + (await tokenRes.text()));
     const token = await tokenRes.text();
 
     const ssml =
-      `<speak version="1.0" xml:lang="en-US"><voice name="en-US-JennyNeural">` +
+      `<speak version="1.0" xml:lang="en-IN"><voice name="en-IN-NeerjaNeural">` +
       description.replace(/&/g, "&amp;").replace(/</g, "&lt;") +
       `</voice></speak>`;
 
-    const ttsRes = await fetch("https://centralindia.tts.speech.microsoft.com/cognitiveservices/v1", {
-      method: "POST",
-      headers: {
-        Authorization: "Bearer " + token,
-        "Content-Type": "application/ssml+xml",
-        "X-Microsoft-OutputFormat": "audio-16khz-32kbitrate-mono-mp3",
-        Accept: "audio/mpeg",
-        "User-Agent": "athena-ultra-simple",
-      },
-      body: ssml,
-    });
+    const ttsRes = await fetch(
+      "https://centralindia.tts.speech.microsoft.com/cognitiveservices/v1",
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer " + token,
+          "Content-Type": "application/ssml+xml",
+          "X-Microsoft-OutputFormat": "audio-16khz-32kbitrate-mono-mp3",
+          Accept: "audio/mpeg",
+          "User-Agent": "athena-ultra-simple",
+        },
+        body: ssml,
+      }
+    );
     if (!ttsRes.ok) throw new Error("Azure TTS: " + (await ttsRes.text()));
     const audio = Buffer.from(await ttsRes.arrayBuffer());
 
     fs.writeFileSync("output.mp3", audio);
     console.log("Saved output.mp3\nGemini:", description);
+    process.exit(0);
 
   } catch (e) {
     console.error("✖ Error:", e?.message || e);
