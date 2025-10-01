@@ -1,4 +1,5 @@
 import express from "express"
+import { imageInfo } from "../../controllers/imageControllers.js"
 
 const router = express.Router()
 
@@ -8,5 +9,7 @@ router.get("/", (req, res) => {
         message: "Athena API V1"
     })
 })
+
+router.post("/getImageInfo",imageInfo)
 
 export default router
